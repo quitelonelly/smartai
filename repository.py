@@ -4,7 +4,6 @@ import logging
 from dotenv import load_dotenv
 from fastapi import HTTPException
 import aiohttp
-import re
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -64,17 +63,28 @@ async def transcribe_audio(file_obj):
 def format_transcription(words):
     transcription = []
     current_sentence = []
+    current_speaker = None
 
-    for word in words:
+    for i, word in enumerate(words):
+        # Если это начало или сменился спикер, начинаем новое предложение
+        if current_speaker is None or word['speaker'] != current_speaker:
+            if current_sentence:
+                transcription.append({
+                    "text": " ".join(current_sentence),
+                    "speaker": current_speaker
+                })
+                current_sentence = []
+            current_speaker = word['speaker']
+
         # Добавляем слово в текущее предложение
         current_sentence.append(word['text'])
 
-        # Проверяем, заканчивается ли слово на знак препинания
-        if word['text'].endswith('.') or word['text'].endswith('?'):
-            # Если да, то объединяем текущее предложение и добавляем в транскрипцию
+        # Проверяем, заканчивается ли слово на завершающий знак препинания
+        if word['text'].endswith(('.', '?', '!', '...')):
+            # Если предложение завершено, добавляем его в транскрипцию
             transcription.append({
                 "text": " ".join(current_sentence),
-                "speaker": word['speaker']  # Сохраняем информацию о спикере
+                "speaker": current_speaker
             })
             current_sentence = []  # Сбрасываем текущее предложение
 
@@ -82,44 +92,38 @@ def format_transcription(words):
     if current_sentence:
         transcription.append({
             "text": " ".join(current_sentence),
-            "speaker": words[-1]['speaker']  # Сохраняем информацию о спикере последнего слова
+            "speaker": current_speaker
         })
 
     return transcription
 
 
 def classify_roles(transcription):
-    # Определяем ключевые фразы для ролей
-    role_patterns = {
-        "Менеджер": r"(Добрый день|Как у вас дела|Конечно|С удовольствием|Хотелось бы узнать)",
-        "Клиент": r"(Все хорошо|Спасибо|Хотелось бы|Я думаю|Мне нужно|Здравствуйте|Мне неинтересно)"
-    }
-    
     classified = []
+    first_speaker = None  # Для хранения первого спикера
+
+    # Определяем ключевые слова
+    manager_keywords = ["Меня зовут", "интересовались", "давайте", "предлагаю"]
+    client_keywords = ["я хочу", "мне нужно", "можете", "как"]
 
     for entry in transcription:
         text = entry['text']
         speaker = entry['speaker']
-        role_found = False
 
-        # Проверяем, если спикер соответствует известной роли
-        if speaker == "1":  # Предположим, что "1" - это менеджер
-            classified.append({"role": "Менеджер", "text": text})
-            role_found = True
-        elif speaker == "2":  # Предположим, что "2" - это клиент
-            classified.append({"role": "Клиент", "text": text})
-            role_found = True
+        # Если это первая реплика, определяем роли
+        if first_speaker is None:
+            first_speaker = speaker
+            role = "Клиент"  # Предполагаем, что первый спикер — это клиент
+        else:
+            # Проверяем наличие ключевых слов
+            if any(keyword in text.lower() for keyword in manager_keywords):
+                role = "Менеджер"
+            elif any(keyword in text.lower() for keyword in client_keywords):
+                role = "Клиент"
+            else:
+                # Если спикер совпадает с первым, это клиент, иначе — менеджер
+                role = "Клиент" if speaker == first_speaker else "Менеджер"
 
-        # Если роль не найдена, проверяем по ключевым фразам
-        if not role_found:
-            for role, pattern in role_patterns.items():
-                if re.search(pattern, text):
-                    classified.append({"role": role, "text": text})
-                    role_found = True
-                    break
-
-        # Если роль все еще не найдена, помечаем как "Неизвестно"
-        if not role_found:
-            classified.append({"role": "Неизвестно", "text": text})
+        classified.append({"role": role, "text": text})
 
     return classified
