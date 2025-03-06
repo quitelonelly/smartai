@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi import HTTPException
 import aiohttp
+import re
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -28,11 +29,12 @@ async def transcribe_audio(file_obj):
                 response_data = await response.json()
                 audio_url = response_data['upload_url']
                 
-                # Запрос на транскрипцию с указанием языка
+                # Запрос на транскрипцию с указанием языка и определения говорящих
                 transcript_url = "https://api.assemblyai.com/v2/transcript"
                 transcript_request = {
                     "audio_url": audio_url,
-                    "language_code": "ru"  # Указываем русский язык
+                    "language_code": "ru",  # Указываем русский язык
+                    "speaker_labels": True  # Указываем, что нужно определить говорящих
                 }
                 
                 logger.info("Запрос транскрипции.")
@@ -48,7 +50,9 @@ async def transcribe_audio(file_obj):
                         
                         if status_data['status'] == 'completed':
                             logger.info("Транскрипция успешно завершена.")
-                            return status_data['text']
+                            # Форматируем результат с указанием говорящих
+                            formatted_transcription = format_transcription(status_data['words'])
+                            return classify_roles(formatted_transcription)
                         elif status_data['status'] == 'failed':
                             logger.error("Транскрипция не удалась.")
                             raise HTTPException(status_code=500, detail="Транскрипция не удалась")
@@ -56,3 +60,37 @@ async def transcribe_audio(file_obj):
         except Exception as e:
             logger.exception("Во время транскрипции произошла ошибка.")
             raise HTTPException(status_code=500, detail=str(e))
+
+def format_transcription(words):
+    transcription = []
+    for word in words:
+        # Сохраняем только текст слова
+        transcription.append(word['text'])
+    
+    # Объединяем все слова в одну строку
+    formatted_output = " ".join(transcription)
+    return formatted_output
+
+
+def classify_roles(transcription):
+    # Определяем ключевые фразы для ролей
+    role_patterns = {
+        "Менеджер": r"(Добрый день|Как у вас дела|Конечно|Позвольте рассказать о нашем продукте|Мы предлагаем)",
+        "Клиент": r"(Здравствуйте|Мне неинтересно|Интересно|Я думаю|Мне нужно)"
+    }
+    
+    # Разбиваем транскрипцию на реплики
+    lines = transcription.split('. ')
+    classified = []
+
+    for line in lines:
+        role_found = False
+        for role, pattern in role_patterns.items():
+            if re.search(pattern, line):
+                classified.append({"role": role, "text": line.strip()})
+                role_found = True
+                break
+        if not role_found:
+            classified.append({"role": "Неизвестно", "text": line.strip()})
+
+    return classified
