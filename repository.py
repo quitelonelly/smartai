@@ -63,34 +63,63 @@ async def transcribe_audio(file_obj):
 
 def format_transcription(words):
     transcription = []
+    current_sentence = []
+
     for word in words:
-        # Сохраняем только текст слова
-        transcription.append(word['text'])
-    
-    # Объединяем все слова в одну строку
-    formatted_output = " ".join(transcription)
-    return formatted_output
+        # Добавляем слово в текущее предложение
+        current_sentence.append(word['text'])
+
+        # Проверяем, заканчивается ли слово на знак препинания
+        if word['text'].endswith('.') or word['text'].endswith('?'):
+            # Если да, то объединяем текущее предложение и добавляем в транскрипцию
+            transcription.append({
+                "text": " ".join(current_sentence),
+                "speaker": word['speaker']  # Сохраняем информацию о спикере
+            })
+            current_sentence = []  # Сбрасываем текущее предложение
+
+    # Если остались слова в текущем предложении, добавляем их
+    if current_sentence:
+        transcription.append({
+            "text": " ".join(current_sentence),
+            "speaker": words[-1]['speaker']  # Сохраняем информацию о спикере последнего слова
+        })
+
+    return transcription
 
 
 def classify_roles(transcription):
     # Определяем ключевые фразы для ролей
     role_patterns = {
-        "Менеджер": r"(Добрый день|Как у вас дела|Конечно|Позвольте рассказать о нашем продукте|Мы предлагаем)",
-        "Клиент": r"(Здравствуйте|Мне неинтересно|Интересно|Я думаю|Мне нужно)"
+        "Менеджер": r"(Добрый день|Как у вас дела|Конечно|С удовольствием|Хотелось бы узнать)",
+        "Клиент": r"(Все хорошо|Спасибо|Хотелось бы|Я думаю|Мне нужно|Здравствуйте|Мне неинтересно)"
     }
     
-    # Разбиваем транскрипцию на реплики
-    lines = transcription.split('. ')
     classified = []
 
-    for line in lines:
+    for entry in transcription:
+        text = entry['text']
+        speaker = entry['speaker']
         role_found = False
-        for role, pattern in role_patterns.items():
-            if re.search(pattern, line):
-                classified.append({"role": role, "text": line.strip()})
-                role_found = True
-                break
+
+        # Проверяем, если спикер соответствует известной роли
+        if speaker == "1":  # Предположим, что "1" - это менеджер
+            classified.append({"role": "Менеджер", "text": text})
+            role_found = True
+        elif speaker == "2":  # Предположим, что "2" - это клиент
+            classified.append({"role": "Клиент", "text": text})
+            role_found = True
+
+        # Если роль не найдена, проверяем по ключевым фразам
         if not role_found:
-            classified.append({"role": "Неизвестно", "text": line.strip()})
+            for role, pattern in role_patterns.items():
+                if re.search(pattern, text):
+                    classified.append({"role": role, "text": text})
+                    role_found = True
+                    break
+
+        # Если роль все еще не найдена, помечаем как "Неизвестно"
+        if not role_found:
+            classified.append({"role": "Неизвестно", "text": text})
 
     return classified
