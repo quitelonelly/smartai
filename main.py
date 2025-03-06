@@ -18,10 +18,13 @@ async def read_root():
 async def favicon():
     return Response(status_code=204)  # Возвращаем пустой ответ с кодом 204 (No Content)
 
-
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
     logger.info("Получен файл для транскрипции.")
-    transcription = await transcribe_audio(file)
-    logger.info("Транскрипция завершена.")
-    return {"transcription": transcription}
+    try:
+        transcription = await transcribe_audio(file)
+        logger.info("Транскрипция завершена.")
+        return {"transcription": transcription}
+    except Exception as e:
+        logger.error(f"Ошибка при транскрипции: {e}")
+        return {"error": str(e)}
