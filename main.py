@@ -16,7 +16,7 @@ async def read_root():
 
 @app.get("/favicon.ico")
 async def favicon():
-    return Response(status_code=204)  # Возвращаем пустой ответ с кодом 204 (No Content)
+    return Response(status_code=204) 
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):

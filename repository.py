@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi import HTTPException
 import aiohttp
+import json
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -13,61 +14,35 @@ load_dotenv()
 
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 
+# Загрузка ключевых фраз из JSON-файла
+def load_key_phrases():
+    try:
+        with open("key_phrases.json", "r", encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        logger.error("Файл key_phrases.json не найден.")
+        raise HTTPException(status_code=500, detail="Файл key_phrases.json не найден.")
+    except json.JSONDecodeError:
+        logger.error("Ошибка декодирования JSON в файле key_phrases.json.")
+        raise HTTPException(status_code=500, detail="Ошибка декодирования JSON в файле key_phrases.json.")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки ключевых фраз: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки ключевых фраз: {e}")
+
+# Загружаем ключевые фразы
+try:
+    key_phrases = load_key_phrases()
+except HTTPException:
+    # В случае ошибки загрузки фраз, используем пустые списки
+    key_phrases = {
+        "manager_phrases": [],
+        "client_phrases": []
+    }
+
 def predict_role(text, previous_role=None, is_first_message=False):
     """
     Определяет роль (Менеджер или Клиент) на основе текста, предыдущей роли и контекста.
     """
-    # Ключевые фразы для менеджера
-    manager_phrases = [
-        "меня зовут",
-        "наша компания",
-        "предлагаем",
-        "интересовались",
-        "обращаться",
-        "актуально",
-        "стоимость",
-        "гарантия",
-        "запрос",
-        "удобно ли",
-        "свяжемся",
-        "подскажите",
-        "уточнить",
-        "назначить встречу",
-        "дизайн интерьера",
-        "ремонт под ключ",
-        "3D-визуализация",
-        "удаленное время",
-        "чем могу помочь",
-        "когда планируете",
-        "какой проект",
-        "какой стиль",
-        "сколько времени",
-    ]
-
-    # Ключевые фразы для клиента
-    client_phrases = [
-        "алло",
-        "здравствуйте",
-        "хотел бы",
-        "не актуально",
-        "не интересно",
-        "сколько стоит",
-        "сколько времени",
-        "когда можно",
-        "какая гарантия",
-        "не знаю",
-        "пока нет",
-        "перезвоню",
-        "подскажите",
-        "интересуюсь",
-        "обсудить проект",
-        "квартира",
-        "офис",
-        "загородный дом",
-        "ремонт",
-        "дизайн",
-    ]
-
     # Приводим текст к нижнему регистру для сравнения
     text_lower = text.lower()
 
@@ -76,12 +51,12 @@ def predict_role(text, previous_role=None, is_first_message=False):
         return "Менеджер"
 
     # Проверяем, содержит ли текст фразы менеджера
-    for phrase in manager_phrases:
+    for phrase in key_phrases["manager_phrases"]:
         if phrase in text_lower:
             return "Менеджер"
 
     # Проверяем, содержит ли текст фразы клиента
-    for phrase in client_phrases:
+    for phrase in key_phrases["client_phrases"]:
         if phrase in text_lower:
             return "Клиент"
 
