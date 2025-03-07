@@ -4,7 +4,6 @@ import logging
 from dotenv import load_dotenv
 from fastapi import HTTPException
 import aiohttp
-from role_classifier import predict_role
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +12,84 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
+
+def predict_role(text, previous_role=None, is_first_message=False):
+    """
+    Определяет роль (Менеджер или Клиент) на основе текста, предыдущей роли и контекста.
+    """
+    # Ключевые фразы для менеджера
+    manager_phrases = [
+        "меня зовут",
+        "наша компания",
+        "предлагаем",
+        "интересовались",
+        "обращаться",
+        "актуально",
+        "стоимость",
+        "гарантия",
+        "запрос",
+        "удобно ли",
+        "свяжемся",
+        "подскажите",
+        "уточнить",
+        "назначить встречу",
+        "дизайн интерьера",
+        "ремонт под ключ",
+        "3D-визуализация",
+        "удаленное время",
+        "чем могу помочь",
+        "когда планируете",
+        "какой проект",
+        "какой стиль",
+        "сколько времени",
+    ]
+
+    # Ключевые фразы для клиента
+    client_phrases = [
+        "алло",
+        "здравствуйте",
+        "хотел бы",
+        "не актуально",
+        "не интересно",
+        "сколько стоит",
+        "сколько времени",
+        "когда можно",
+        "какая гарантия",
+        "не знаю",
+        "пока нет",
+        "перезвоню",
+        "подскажите",
+        "интересуюсь",
+        "обсудить проект",
+        "квартира",
+        "офис",
+        "загородный дом",
+        "ремонт",
+        "дизайн",
+    ]
+
+    # Приводим текст к нижнему регистру для сравнения
+    text_lower = text.lower()
+
+    # Если это первая реплика и текст содержит приветствие, это менеджер
+    if is_first_message and any(phrase in text_lower for phrase in ["здравствуйте", "добрый день", "добрый вечер"]):
+        return "Менеджер"
+
+    # Проверяем, содержит ли текст фразы менеджера
+    for phrase in manager_phrases:
+        if phrase in text_lower:
+            return "Менеджер"
+
+    # Проверяем, содержит ли текст фразы клиента
+    for phrase in client_phrases:
+        if phrase in text_lower:
+            return "Клиент"
+
+    # Если ни одна фраза не подошла, чередуем роли
+    if previous_role == "Менеджер":
+        return "Клиент"
+    else:
+        return "Менеджер"
 
 async def transcribe_audio(file_obj):
     url = "https://api.assemblyai.com/v2/upload"
@@ -92,10 +169,20 @@ def format_transcription(words):
 
 def classify_roles(transcription):
     classified = []
-    for entry in transcription:
+    previous_role = None
+
+    for i, entry in enumerate(transcription):
         text = entry['text']
         speaker = entry['speaker']
-        role = predict_role(text)
+        
+        # Определяем, является ли это первой репликой
+        is_first_message = (i == 0)
+        
+        # Определяем роль на основе текста, предыдущей роли и контекста
+        role = predict_role(text, previous_role, is_first_message)
         classified.append({"role": role, "text": text})
+        
+        # Обновляем предыдущую роль
+        previous_role = role
 
     return classified
