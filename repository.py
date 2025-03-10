@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 import aiohttp
 import httpx
+import openai
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -14,11 +15,9 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Загружаем API-ключи
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PROXY_URL = os.getenv("PROXY_URL")
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# Модель DeepSeek R1
-DEEPSEEK_MODEL = "deepseek/deepseek-r1"
 
 # Загружаем ключевые фразы из JSON-файла
 with open("key_phrases.json", "r", encoding="utf-8") as file:
@@ -30,18 +29,14 @@ CLIENT_PHRASES = key_phrases["client_phrases"]
 # Счетчик реплик для определения порядка приветствий
 greeting_counter = 0
 
-# Функция для запроса к DeepSeek R1 через OpenRouter
-async def deepseek_request(text, context=None):
+# Настройка OpenAI с прокси
+openai.api_key = OPENAI_API_KEY
+openai.proxy = PROXY_URL
+
+async def openai_request(text, context=None):
     """
-    Отправляет запрос к модели DeepSeek для определения роли (менеджер/клиент).
+    Отправляет запрос к OpenAI для определения роли (менеджер/клиент).
     """
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    # Формируем контекст для модели
     messages = []
     if context:
         for entry in context:
@@ -50,45 +45,45 @@ async def deepseek_request(text, context=None):
                 "content": f"{entry['role']}: {entry['text']}"
             })
     
-    # Добавляем текущую фразу для классификации
     messages.append({
-        "role": "user",
-        "content": f"""
-        Ты опытный ИИ агент, который анализирует диалоги между менеджером и клиентом. Твоя задача — определить, кто говорит в следующей фразе: менеджер или клиент.
+    "role": "user",
+    "content": f"""
+    Ты — опытный ИИ-аналитик, который специализируется на анализе диалогов между менеджером и клиентом. Твоя задача — определить, кто говорит в следующей фразе: менеджер или клиент.
 
-        Контекст диалога:
-        {context if context else "Контекст отсутствует."}
+    Контекст диалога:
+    {context if context else "Контекст отсутствует."}
 
-        Учти, что первое приветствие всегда от менеджера.
+    Учти следующие правила:
+    1. Первое приветствие в диалоге всегда говорит менеджер.
+    2. Менеджер чаще задает вопросы, уточняет информацию, предлагает услуги или продукты.
+    3. Клиент чаще выражает свои потребности, задает вопросы о продукте или услуге, соглашается или отказывается от предложений.
+    4. Если фраза содержит приветствие (например, "Здравствуйте", "Добрый день"), и это первое приветствие в диалоге, то это менеджер. Если это второе приветствие, то это клиент.
+    5. Если фраза содержит предложение помощи, уточнение или вопрос о потребностях клиента, то это менеджер.
+    6. Первое прощание скорее всего от менеджера.
+    7. После вопроса "Как я могу к вам обращаться?" имя называет клиент.
 
-        Теперь определи роль для следующей фразы:
-        Текст: "{text}"
-        Роль:
+    Теперь определи роль для следующей фразы:
+    Текст: "{text}"
+    Роль:
 
-        Верни только одно слово: "Менеджер" или "Клиент". Ничего больше не пиши. Не добавляй рассуждения.
-        """
-    })
-    
-    data = {
-        "model": DEEPSEEK_MODEL,
-        "messages": messages,
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, headers=headers, json=data)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Ошибка HTTP при запросе к DeepSeek: {e}")
-            raise HTTPException(status_code=e.response.status_code, detail=str(e))
-        except Exception as e:
-            logger.error(f"Ошибка при запросе к DeepSeek: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-async def predict_role_with_deepseek(text, context=None):
+    Верни только одно слово: "Менеджер" или "Клиент". Ничего больше не пиши. Не добавляй рассуждения.
     """
-    Определяет роль (менеджер/клиент) для текста с использованием DeepSeek и контекста.
+})
+    
+    try:
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            proxy=PROXY_URL
+        )
+        return response
+    except Exception as e:
+        logger.error(f"Ошибка при запросе к OpenAI: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def predict_role_with_openai(text, context=None):
+    """
+    Определяет роль (менеджер/клиент) для текста с использованием OpenAI и контекста.
     """
     global greeting_counter
 
@@ -109,9 +104,9 @@ async def predict_role_with_deepseek(text, context=None):
             elif greeting_counter == 2:
                 return "Клиент"  # Второе приветствие — клиент
 
-        # Если порядок приветствий не помогает, используем DeepSeek с контекстом
-        response = await deepseek_request(text, context)
-        logger.info(f"Ответ DeepSeek: {response}")  # Логируем полный ответ
+        # Если порядок приветствий не помогает, используем OpenAI с контекстом
+        response = await openai_request(text, context)
+        logger.info(f"Ответ OpenAI: {response}")  # Логируем полный ответ
         
         # Извлекаем роль из поля content
         role = response["choices"][0]["message"]["content"].strip()
@@ -122,15 +117,15 @@ async def predict_role_with_deepseek(text, context=None):
         elif "Клиент" in role:
             return "Клиент"
         else:
-            logger.warning(f"DeepSeek вернул неожиданную роль: '{role}'. Использую значение по умолчанию.")
+            logger.warning(f"OpenAI вернул неожиданную роль: '{role}'. Использую значение по умолчанию.")
             return "Клиент"  # По умолчанию
     except Exception as e:
         logger.error(f"Ошибка при определении роли: {e}")
         return "Клиент"  # По умолчанию
 
-async def classify_roles_with_deepseek(transcription):
+async def classify_roles_with_openai(transcription):
     """
-    Классифицирует роли для каждой фразы в транскрипции с использованием DeepSeek.
+    Классифицирует роли для каждой фразы в транскрипции с использованием OpenAI.
     """
     classified = []
     context = []  # Сохраняем контекст диалога
@@ -139,7 +134,7 @@ async def classify_roles_with_deepseek(transcription):
         text = entry['text']
         
         # Определяем роль с учетом всего контекста
-        role = await predict_role_with_deepseek(text, context)
+        role = await predict_role_with_openai(text, context)
         logger.info(f"Текст: '{text}' -> Роль: '{role}'")  # Логируем результат
         
         # Добавляем текущую реплику в контекст
@@ -198,7 +193,7 @@ async def transcribe_audio(file_obj):
                         if status_data['status'] == 'completed':
                             logger.info("Транскрипция успешно завершена.")
                             formatted_transcription = format_transcription(status_data['words'])
-                            roles = await classify_roles_with_deepseek(formatted_transcription)
+                            roles = await classify_roles_with_openai(formatted_transcription)
                             return roles
                         elif status_data['status'] == 'failed':
                             logger.error("Транскрипция не удалась.")
